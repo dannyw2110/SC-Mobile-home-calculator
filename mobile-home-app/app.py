@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import numpy as np
 import pandas as pd
@@ -11,6 +12,33 @@ st.set_page_config(
     page_icon="📱",
     layout="wide",
 )
+
+# --- SAVED OFFERS PERSISTENT FILE ---
+SAVED_OFFERS_FILE = "saved_offers.csv"
+
+
+def load_saved_offers():
+  if os.path.exists(SAVED_OFFERS_FILE):
+    try:
+      return pd.read_csv(SAVED_OFFERS_FILE)
+    except Exception:
+      return pd.DataFrame()
+  return pd.DataFrame()
+
+
+def save_offer_to_file(data):
+  df = load_saved_offers()
+  new_row = pd.DataFrame([data])
+  if not df.empty and "Address" in df.columns:
+    # Remove existing record for the same address to update it
+    mask = (
+        df["Address"].astype(str).str.strip().str.lower()
+        == data["Address"].strip().lower()
+    )
+    df = df[~mask]
+  df = pd.concat([df, new_row], ignore_index=True)
+  df.to_csv(SAVED_OFFERS_FILE, index=False)
+  return df
 
 
 # --- PASSWORD PROTECTION ---
@@ -121,6 +149,50 @@ def load_and_clean_data():
 
 df_dataset = load_and_clean_data()
 
+# --- SIDEBAR: SAVED DEALS LOADER ---
+saved_df = load_saved_offers()
+
+st.sidebar.header("📂 Load Saved Property")
+saved_addresses = ["-- Select New Property --"]
+if not saved_df.empty and "Address" in saved_df.columns:
+  saved_addresses += list(saved_df["Address"].dropna().unique())
+
+selected_saved_prop = st.sidebar.selectbox(
+    "Pull Up Previous Offer:", saved_addresses
+)
+
+# Defaults
+def_address = "Columbia, SC"
+def_size = "Singlewide"
+def_year = 1990
+def_beds = 3
+def_baths = 2.00
+def_move = "Must Be Moved (Yes)"
+def_cond = 7
+def_risk = 80
+def_profit = 0.50
+
+# Pre-fill if saved property selected
+if (
+    selected_saved_prop != "-- Select New Property --"
+    and not saved_df.empty
+    and "Address" in saved_df.columns
+):
+  match_row = saved_df[saved_df["Address"] == selected_saved_prop]
+  if not match_row.empty:
+    row_data = match_row.iloc[-1]
+    def_address = str(row_data.get("Address", def_address))
+    def_size = str(row_data.get("Footprint Size", def_size))
+    def_year = int(row_data.get("Year Built", def_year))
+    def_beds = int(row_data.get("Bedrooms", def_beds))
+    def_baths = float(row_data.get("Bathrooms", def_baths))
+    def_move = str(row_data.get("Must Move", def_move))
+    def_cond = int(row_data.get("Condition Rating", def_cond))
+    def_risk = int(row_data.get("Risk Discount (%)", def_risk))
+    def_profit = float(row_data.get("Target Profit Ratio", def_profit))
+
+st.sidebar.markdown("---")
+
 # --- MAIN TWO-COLUMN DASHBOARD LAYOUT ---
 col_left, col_right = st.columns([1, 1], gap="large")
 
@@ -128,35 +200,39 @@ col_left, col_right = st.columns([1, 1], gap="large")
 with col_left:
   st.subheader("📝 Control Parameters")
 
-  property_address = st.text_input("Property Address", value="Columbia, SC")
+  property_address = st.text_input("Property Address", value=def_address)
 
+  size_opts = ["Singlewide", "Doublewide"]
+  size_idx = size_opts.index(def_size) if def_size in size_opts else 0
   footprint_size = st.selectbox(
-      "Footprint Size Class", ["Singlewide", "Doublewide"]
+      "Footprint Size Class", size_opts, index=size_idx
   )
 
   year_built = st.number_input(
-      "Year Built", min_value=1970, max_value=2026, value=1990, step=1
+      "Year Built", min_value=1970, max_value=2026, value=def_year, step=1
   )
 
   c_bed, c_bath = st.columns(2)
   bedrooms = c_bed.number_input(
-      "Bedrooms", min_value=1, max_value=6, value=3, step=1
+      "Bedrooms", min_value=1, max_value=6, value=def_beds, step=1
   )
   bathrooms = c_bath.number_input(
-      "Bathrooms", min_value=1.0, max_value=4.0, value=2.00, step=0.5
+      "Bathrooms", min_value=1.0, max_value=4.0, value=def_baths, step=0.5
   )
 
+  move_opts = ["Stay Put (No)", "Must Be Moved (Yes)"]
+  move_idx = move_opts.index(def_move) if def_move in move_opts else 1
   must_move_radio = st.radio(
       "Logistics Status: Does the home need to be moved?",
-      ["Stay Put (No)", "Must Be Moved (Yes)"],
-      index=1,
+      move_opts,
+      index=move_idx,
   )
 
   condition_rating = st.slider(
       "As-Is Condition Rating (1=Total Wreck, 5=Average, 10=Pristine)",
       min_value=1,
       max_value=10,
-      value=7,
+      value=def_cond,
   )
 
   risk_discount_pct = (
@@ -164,7 +240,7 @@ with col_left:
           "Risk Discount Modifier Strategy (%)",
           min_value=50,
           max_value=100,
-          value=80,
+          value=def_risk,
           help="Discount percentage applied to ceiling value.",
       )
       / 100.0
@@ -174,12 +250,12 @@ with col_left:
       "Target Profit per Dollar Invested ($)",
       min_value=0.10,
       max_value=1.00,
-      value=0.50,
+      value=def_profit,
       step=0.05,
       help="Required profit ratio relative to investment capital.",
   )
 
-# ==================== UNDERWRITING ENGINE MATH (STATISTICAL DATA MODEL) ====================
+# ==================== UNDERWRITING ENGINE MATH (STATISTICAL MODEL) ====================
 base_benchmark = 34715.0 if footprint_size == "Doublewide" else 23431.0
 base_year = 2000
 age_adjustment = (year_built - base_year) * 483.0
@@ -259,14 +335,55 @@ with col_right:
       unsafe_allow_html=True,
   )
 
-  if st.button("Log Deal Data & Lock Offer", use_container_width=False):
+  # SAVE DEAL ACTION
+  if st.button("Log Deal Data & Lock Offer", use_container_width=True):
+    record = {
+        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "Address": property_address,
+        "Footprint Size": footprint_size,
+        "Year Built": year_built,
+        "Bedrooms": bedrooms,
+        "Bathrooms": bathrooms,
+        "Must Move": must_move_radio,
+        "Condition Rating": condition_rating,
+        "Risk Discount (%)": int(risk_discount_pct * 100),
+        "Target Profit Ratio": target_profit_ratio,
+        "Gross Resale Value": round(gross_resale_value, 2),
+        "Target Exit Value": round(target_exit_value, 2),
+        "MAO": round(max_allowable_offer, 2),
+        "Targeted Profit": round(targeted_profit, 2),
+    }
+    save_offer_to_file(record)
     st.success(
-        f"Offer of ${max_allowable_offer:,.2f} locked for {property_address}!"
+        f"✅ Offer of ${max_allowable_offer:,.2f} for '{property_address}' saved"
+        " successfully!"
     )
+    st.rerun()
+
+# ==================== PORTFOLIO OF SAVED OFFERS ====================
+st.markdown("---")
+saved_df_current = load_saved_offers()
+if not saved_df_current.empty:
+  with st.expander("📁 View Portfolio of Locked & Saved Offers"):
+    st.markdown(
+        "Here are all previously underwritten properties and locked offers:"
+    )
+
+    # Format currency columns
+    display_df = saved_df_current.copy()
+    for col in [
+        "Gross Resale Value",
+        "Target Exit Value",
+        "MAO",
+        "Targeted Profit",
+    ]:
+      if col in display_df.columns:
+        display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
+
+    st.dataframe(display_df, use_container_width=True)
 
 # ==================== HISTORICAL COMPS LOOKUP SECTION ====================
 if df_dataset is not None and len(df_dataset) > 0:
-  st.markdown("---")
   with st.expander("🔍 View Historical Sales Database (Top Matching Comps)"):
     features = [
         "Size_Double",
