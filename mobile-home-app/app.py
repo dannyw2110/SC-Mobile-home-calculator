@@ -1,18 +1,22 @@
 import os
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 import streamlit as st
 
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="SC Mobile Home Valuation Engine", page_icon="🏡", layout="wide"
 )
 
 
+# --- PASSWORD PROTECTION ---
 def check_password():
   if "password_correct" not in st.session_state:
     st.session_state["password_correct"] = False
+
   if not st.session_state["password_correct"]:
     st.title("🔒 Login Required")
     password_input = st.text_input("Enter Access Key:", type="password")
@@ -29,6 +33,7 @@ def check_password():
 if not check_password():
   st.stop()
 
+# --- APP HEADER ---
 st.title("🏡 Mobile Home Deal Valuation & Offer Calculator")
 st.markdown(
     "Use historical South Carolina sales data (2022–2026) to estimate resale"
@@ -38,7 +43,6 @@ st.markdown(
 
 # --- DYNAMIC FILE PATH RESOLVER ---
 def find_data_file(filename="Combined_Sales_Data_2022-2026.csv"):
-  # Check relative to app.py location first, then working directory, then subfolders
   base_dir = os.path.dirname(os.path.abspath(__file__))
   possible_paths = [
       os.path.join(base_dir, filename),
@@ -51,6 +55,7 @@ def find_data_file(filename="Combined_Sales_Data_2022-2026.csv"):
   return None
 
 
+# --- DATA LOADING & CLEANING ---
 @st.cache_data
 def load_and_clean_data():
   file_path = find_data_file()
@@ -75,6 +80,7 @@ def load_and_clean_data():
 
   df["Sales Price Clean"] = df["Sales Price"].apply(clean_currency)
   df_clean = df.dropna(subset=["Sales Price Clean"]).copy()
+
   df_clean["Year Built Clean"] = pd.to_numeric(
       df_clean["Year Built"], errors="coerce"
   )
@@ -95,6 +101,7 @@ def load_and_clean_data():
   df_clean["Rating Clean"] = df_clean["Rating Clean"].fillna(
       df_clean["Rating Clean"].median()
   )
+
   df_clean["Size_Double"] = (
       df_clean["Size (Single/Double)"]
       .astype(str)
@@ -106,6 +113,7 @@ def load_and_clean_data():
       df_clean["Must Move (Yes/No)"].astype(str).str.strip().str.capitalize()
       == "Yes"
   ).astype(int)
+
   return df_clean
 
 
@@ -120,6 +128,7 @@ if df_dataset is None or len(df_dataset) == 0:
 
 st.sidebar.success(f"Loaded {len(df_dataset)} Sales Records")
 
+# --- MODEL SETUP ---
 features = ["Size_Double", "Year Built Clean", "MustMove_Yes", "Rating Clean"]
 X = df_dataset[features]
 scaler = StandardScaler()
@@ -128,31 +137,42 @@ X_scaled = scaler.fit_transform(X)
 knn = NearestNeighbors(n_neighbors=5, metric="euclidean")
 knn.fit(X_scaled)
 
+# --- SIDEBAR INPUTS ---
+st.sidebar.markdown("---")
 st.sidebar.header("📝 Subject Property Specs")
+
 lead_address = st.sidebar.text_input(
-    "Property Address", "123 Main St, Moncks Corner, SC"
+    "Property Address / Lead Name", "123 Main St, Moncks Corner, SC"
 )
 size_input = st.sidebar.radio("Home Size", ["Single", "Double"])
 year_input = st.sidebar.number_input(
-    "Year Built", min_value=1970, max_value=2026, value=2002
+    "Year Built", min_value=1970, max_value=2026, value=2002, step=1
 )
 must_move_input = st.sidebar.radio(
     "Must Be Moved Off Lot?", ["No (In-Park / Stays)", "Yes (Must Move)"]
 )
-condition_rating = st.sidebar.slider("Condition Rating (1-10)", 1, 10, 7)
+condition_rating = st.sidebar.slider(
+    "Condition Rating (1 = Trash, 10 = Move-in Ready)", 1, 10, 7
+)
 
+st.sidebar.markdown("---")
 st.sidebar.header("💰 Deal Financial Parameters")
+
 target_margin_pct = (
     st.sidebar.slider("Target Profit Margin (%)", 10, 40, 25, 5) / 100.0
 )
 estimated_rehab = st.sidebar.number_input(
-    "Estimated Rehab ($)", min_value=0, value=5000, step=500
+    "Estimated Rehab / Repair Costs ($)", min_value=0, value=5000, step=500
 )
-default_move = 3000 if "Yes" in must_move_input else 0
-estimated_move = st.sidebar.number_input(
-    "Estimated Transport ($)", min_value=0, value=default_move, step=500
+default_move_cost = 3000 if "Yes" in must_move_input else 0
+estimated_move_cost = st.sidebar.number_input(
+    "Estimated Transport / Move Costs ($)",
+    min_value=0,
+    value=default_move_cost,
+    step=500,
 )
 
+# --- CALCULATIONS ---
 is_double = 1 if size_input == "Double" else 0
 is_move = 1 if "Yes" in must_move_input else 0
 
@@ -162,32 +182,70 @@ subject_data = pd.DataFrame([{
     "MustMove_Yes": is_move,
     "Rating Clean": float(condition_rating),
 }])[features]
+
 subject_scaled = scaler.transform(subject_data)
 distances, indices = knn.kneighbors(subject_scaled)
 
 matched_comps = df_dataset.iloc[indices[0]].copy()
+
 est_resale_price = matched_comps["Sales Price Clean"].mean()
 min_comp_price = matched_comps["Sales Price Clean"].min()
 max_comp_price = matched_comps["Sales Price Clean"].max()
 
 target_profit = est_resale_price * target_margin_pct
-mao_offer = est_resale_price - target_profit - estimated_rehab - estimated_move
+mao_offer = (
+    est_resale_price - target_profit - estimated_rehab - estimated_move_cost
+)
 
+# --- DASHBOARD RESULTS ---
 st.subheader(f"Valuation Summary for **{lead_address}**")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Estimated Resale Price", f"${est_resale_price:,.0f}")
-c2.metric(
-    "Recommended Max Offer (MAO)",
-    f"${mao_offer:,.0f}",
-    delta=f"Margin: {target_margin_pct*100:.0f}%",
-)
-c3.metric("Target Profit", f"${target_profit:,.0f}")
-c4.metric(
-    "Market Comp Range", f"${min_comp_price:,.0f} - ${max_comp_price:,.0f}"
-)
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+  st.metric("Estimated Resale Price", f"${est_resale_price:,.0f}")
+
+with col2:
+  st.metric(
+      "Recommended Max Offer (MAO)",
+      f"${mao_offer:,.0f}",
+      delta=f"Margin: {target_margin_pct*100:.0f}%",
+  )
+
+with col3:
+  st.metric("Target Profit", f"${target_profit:,.0f}")
+
+with col4:
+  st.metric(
+      "Expected Market Range", f"${min_comp_price:,.0f} - ${max_comp_price:,.0f}"
+  )
 
 st.markdown("---")
+
+# --- FORMULA BREAKDOWN ---
+st.markdown("### Offer Formula Breakdown")
+st.latex(
+    r"\text{MAO} = \text{Estimated Resale} - \text{Target Profit} - \text{Rehab"
+    r" Costs} - \text{Moving Costs}"
+)
+
+col_a, col_b, col_c, col_d = st.columns(4)
+col_a.write(f"**Est. Resale:** ${est_resale_price:,.0f}")
+col_b.write(
+    f"**Target Profit ({target_margin_pct*100:.0f}%):** -${target_profit:,.0f}"
+)
+col_c.write(f"**Est. Rehab:** -${estimated_rehab:,.0f}")
+col_d.write(f"**Est. Moving:** -${estimated_move_cost:,.0f}")
+
+st.markdown("---")
+
+# --- TOP 5 COMPS TABLE ---
 st.subheader("📊 Top 5 Comparable Past Sales")
+st.markdown(
+    "These are the closest matching deals from your 2022–2026 transaction"
+    " history:"
+)
+
 display_cols = [
     "Address",
     "Sales Price Clean",
@@ -201,9 +259,50 @@ comps_display = matched_comps[display_cols].rename(
     columns={
         "Sales Price Clean": "Sold Price ($)",
         "Year Built Clean": "Year Built",
+        "Size (Single/Double)": "Size",
+        "Must Move (Yes/No)": "Must Move",
     }
 )
+
 comps_display["Sold Price ($)"] = comps_display["Sold Price ($)"].map(
     "${:,.0f}".format
 )
+comps_display["Year Built"] = comps_display["Year Built"].astype(int)
+
 st.dataframe(comps_display, use_container_width=True)
+
+# --- MARKET VISUALIZER CHART ---
+st.markdown("---")
+st.subheader("📈 Resale Value vs. Year Built (Historical Context)")
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.scatter(
+    df_dataset["Year Built Clean"],
+    df_dataset["Sales Price Clean"],
+    color="gray",
+    alpha=0.5,
+    label="All Past Sales",
+)
+ax.scatter(
+    matched_comps["Year Built Clean"],
+    matched_comps["Sales Price Clean"],
+    color="blue",
+    s=100,
+    label="Top 5 Comps Used",
+)
+ax.scatter(
+    [year_input],
+    [est_resale_price],
+    color="green",
+    marker="*",
+    s=250,
+    label="Subject Valuation Estimate",
+)
+
+ax.set_xlabel("Year Built")
+ax.set_ylabel("Sales Price ($)")
+ax.set_title("Property Resale Estimate Relative to Market Database")
+ax.legend()
+ax.grid(True, linestyle="--", alpha=0.5)
+
+st.pyplot(fig)
