@@ -37,9 +37,9 @@ if not check_password():
 # --- APP HEADER ---
 st.title("📱 As-Is Mobile Home Wholesale Valuation Engine")
 st.markdown(
-    "This engine calculates max allowable offers for immediate liquidation"
-    " flips based on structural variables, condition scores, and tailored"
-    " moving penalties."
+    "This engine calculates max allowable offer ranges for immediate"
+    " liquidation flips based on structural variables, condition scores, and"
+    " tailored moving penalties."
 )
 st.markdown("---")
 
@@ -179,6 +179,19 @@ with col_left:
       help="Required profit ratio relative to investment capital.",
   )
 
+  # NEW: Offer Range Spread Control
+  offer_spread = st.slider(
+      "Negotiation Buffer Below Ceiling ($)",
+      min_value=3000,
+      max_value=5000,
+      value=5000,
+      step=500,
+      help=(
+          "Amount subtracted from the calculated MAO ceiling to set your"
+          " starting low-end offer."
+      ),
+  )
+
 # ==================== UNDERWRITING ENGINE MATH ====================
 base_benchmark = 50000.0 if footprint_size == "Doublewide" else 30000.0
 base_year = 2000
@@ -194,15 +207,22 @@ if "Yes" in must_move_radio:
 liquidation_ceiling = gross_resale_value - relocation_penalty
 target_exit_value = liquidation_ceiling * risk_discount_pct
 
-max_allowable_offer = target_exit_value / (1.0 + target_profit_ratio)
-targeted_profit = max_allowable_offer * target_profit_ratio
+# MAO High-End Ceiling
+max_allowable_offer_high = target_exit_value / (1.0 + target_profit_ratio)
+# Low-End Offer Anchor
+max_allowable_offer_low = max_allowable_offer_high - offer_spread
+
+targeted_profit = max_allowable_offer_high * target_profit_ratio
 
 # ==================== RIGHT COLUMN: LIQUIDATION MATH PROOF ====================
 with col_right:
   st.subheader("📈 As-Is Liquidation Math Proof")
 
   m1, m2 = st.columns(2)
-  m1.metric("MAX ALLOWABLE OFFER", f"${max_allowable_offer:,.2f}")
+  m1.metric(
+      "RECOMMENDED OFFER RANGE",
+      f"${max_allowable_offer_low:,.2f} – ${max_allowable_offer_high:,.2f}",
+  )
   m2.metric("Targeted Wholesale Profit", f"${targeted_profit:,.2f}")
 
   st.markdown("---")
@@ -248,19 +268,21 @@ with col_right:
             <li><b>Risk Discount Strategy Level ({int(risk_discount_pct*100)}%):</b> ${target_exit_value:,.2f}</li>
             <hr style="border-color: #2d4f7c; margin: 10px 0;">
             <li><b>Target Profit Ratio:</b> {target_profit_ratio:.2f} profit for every 1.00 invested</li>
-            <li><b>Maximum Acquisition Cost (Your Investment):</b> ${max_allowable_offer:,.2f}</li>
+            <li><b>Initial Opening Offer (Low Anchor):</b> ${max_allowable_offer_low:,.2f}</li>
+            <li><b>Maximum Acquisition Ceiling (High End):</b> ${max_allowable_offer_high:,.2f}</li>
             <li><b>Resulting Minimum Assignment Spread:</b> ${targeted_profit:,.2f}</li>
             <hr style="border-color: #2d4f7c; margin: 10px 0;">
-            <li><b>Mathematical Proof:</b> {max_allowable_offer:,.2f} (Purchase) + {targeted_profit:,.2f} (Profit) = ${target_exit_value:,.2f} (Target Exit Value)</li>
+            <li><b>Mathematical Proof:</b> ${max_allowable_offer_high:,.2f} (Max Purchase) + ${targeted_profit:,.2f} (Profit) = ${target_exit_value:,.2f} (Target Exit Value)</li>
         </ul>
     </div>
     """,
       unsafe_allow_html=True,
   )
 
-  if st.button("Log Deal Data & Lock Offer", use_container_width=False):
+  if st.button("Log Deal Data & Lock Offer Range", use_container_width=False):
     st.success(
-        f"Offer of ${max_allowable_offer:,.2f} locked for {property_address}!"
+        f"Offer range of ${max_allowable_offer_low:,.2f} –"
+        f" ${max_allowable_offer_high:,.2f} locked for {property_address}!"
     )
 
 # ==================== HISTORICAL COMPS LOOKUP SECTION ====================
