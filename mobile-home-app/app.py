@@ -1,5 +1,4 @@
 import os
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import NearestNeighbors
@@ -8,7 +7,9 @@ import streamlit as st
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="SC Mobile Home Valuation Engine", page_icon="🏡", layout="wide"
+    page_title="As-Is Mobile Home Wholesale Valuation Engine",
+    page_icon="📱",
+    layout="wide",
 )
 
 
@@ -34,11 +35,13 @@ if not check_password():
   st.stop()
 
 # --- APP HEADER ---
-st.title("🏡 Mobile Home Deal Valuation & Offer Calculator")
+st.title("📱 As-Is Mobile Home Wholesale Valuation Engine")
 st.markdown(
-    "Use historical South Carolina sales data (2022–2026) to estimate resale"
-    " value and calculate Maximum Allowable Offers (MAO)."
+    "This engine calculates max allowable offers for immediate liquidation"
+    " flips based on structural variables, condition scores, and tailored"
+    " moving penalties."
 )
+st.markdown("---")
 
 
 # --- DYNAMIC FILE PATH RESOLVER ---
@@ -55,7 +58,6 @@ def find_data_file(filename="Combined_Sales_Data_2022-2026.csv"):
   return None
 
 
-# --- DATA LOADING & CLEANING ---
 @st.cache_data
 def load_and_clean_data():
   file_path = find_data_file()
@@ -119,190 +121,197 @@ def load_and_clean_data():
 
 df_dataset = load_and_clean_data()
 
-if df_dataset is None or len(df_dataset) == 0:
-  st.error(
-      "Missing dataset. Ensure 'Combined_Sales_Data_2022-2026.csv' is in the"
-      " project folder."
-  )
-  st.stop()
+# --- MAIN TWO-COLUMN DASHBOARD LAYOUT ---
+col_left, col_right = st.columns([1, 1], gap="large")
 
-st.sidebar.success(f"Loaded {len(df_dataset)} Sales Records")
+# ==================== LEFT COLUMN: CONTROL PARAMETERS ====================
+with col_left:
+  st.subheader("📝 Control Parameters")
 
-# --- MODEL SETUP ---
-features = ["Size_Double", "Year Built Clean", "MustMove_Yes", "Rating Clean"]
-X = df_dataset[features]
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+  property_address = st.text_input("Property Address", value="Columbia, SC")
 
-knn = NearestNeighbors(n_neighbors=5, metric="euclidean")
-knn.fit(X_scaled)
-
-# --- SIDEBAR INPUTS ---
-st.sidebar.markdown("---")
-st.sidebar.header("📝 Subject Property Specs")
-
-lead_address = st.sidebar.text_input(
-    "Property Address / Lead Name", "123 Main St, Moncks Corner, SC"
-)
-size_input = st.sidebar.radio("Home Size", ["Single", "Double"])
-year_input = st.sidebar.number_input(
-    "Year Built", min_value=1970, max_value=2026, value=2002, step=1
-)
-must_move_input = st.sidebar.radio(
-    "Must Be Moved Off Lot?", ["No (In-Park / Stays)", "Yes (Must Move)"]
-)
-condition_rating = st.sidebar.slider(
-    "Condition Rating (1 = Trash, 10 = Move-in Ready)", 1, 10, 7
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("💰 Deal Financial Parameters")
-
-target_margin_pct = (
-    st.sidebar.slider("Target Profit Margin (%)", 10, 40, 25, 5) / 100.0
-)
-estimated_rehab = st.sidebar.number_input(
-    "Estimated Rehab / Repair Costs ($)", min_value=0, value=5000, step=500
-)
-default_move_cost = 3000 if "Yes" in must_move_input else 0
-estimated_move_cost = st.sidebar.number_input(
-    "Estimated Transport / Move Costs ($)",
-    min_value=0,
-    value=default_move_cost,
-    step=500,
-)
-
-# --- CALCULATIONS ---
-is_double = 1 if size_input == "Double" else 0
-is_move = 1 if "Yes" in must_move_input else 0
-
-subject_data = pd.DataFrame([{
-    "Size_Double": is_double,
-    "Year Built Clean": float(year_input),
-    "MustMove_Yes": is_move,
-    "Rating Clean": float(condition_rating),
-}])[features]
-
-subject_scaled = scaler.transform(subject_data)
-distances, indices = knn.kneighbors(subject_scaled)
-
-matched_comps = df_dataset.iloc[indices[0]].copy()
-
-est_resale_price = matched_comps["Sales Price Clean"].mean()
-min_comp_price = matched_comps["Sales Price Clean"].min()
-max_comp_price = matched_comps["Sales Price Clean"].max()
-
-target_profit = est_resale_price * target_margin_pct
-mao_offer = (
-    est_resale_price - target_profit - estimated_rehab - estimated_move_cost
-)
-
-# --- DASHBOARD RESULTS ---
-st.subheader(f"Valuation Summary for **{lead_address}**")
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-  st.metric("Estimated Resale Price", f"${est_resale_price:,.0f}")
-
-with col2:
-  st.metric(
-      "Recommended Max Offer (MAO)",
-      f"${mao_offer:,.0f}",
-      delta=f"Margin: {target_margin_pct*100:.0f}%",
+  footprint_size = st.selectbox(
+      "Footprint Size Class", ["Doublewide", "Singlewide"]
   )
 
-with col3:
-  st.metric("Target Profit", f"${target_profit:,.0f}")
-
-with col4:
-  st.metric(
-      "Expected Market Range", f"${min_comp_price:,.0f} - ${max_comp_price:,.0f}"
+  year_built = st.number_input(
+      "Year Built", min_value=1970, max_value=2026, value=2017, step=1
   )
 
-st.markdown("---")
+  c_bed, c_bath = st.columns(2)
+  bedrooms = c_bed.number_input(
+      "Bedrooms", min_value=1, max_value=6, value=4, step=1
+  )
+  bathrooms = c_bath.number_input(
+      "Bathrooms", min_value=1.0, max_value=4.0, value=2.00, step=0.5
+  )
 
-# --- FORMULA BREAKDOWN ---
-st.markdown("### Offer Formula Breakdown")
-st.latex(
-    r"\text{MAO} = \text{Estimated Resale} - \text{Target Profit} - \text{Rehab"
-    r" Costs} - \text{Moving Costs}"
-)
+  must_move_radio = st.radio(
+      "Logistics Status: Does the home need to be moved?",
+      ["Stay Put (No)", "Must Be Moved (Yes)"],
+      index=1,
+  )
 
-col_a, col_b, col_c, col_d = st.columns(4)
-col_a.write(f"**Est. Resale:** ${est_resale_price:,.0f}")
-col_b.write(
-    f"**Target Profit ({target_margin_pct*100:.0f}%):** -${target_profit:,.0f}"
-)
-col_c.write(f"**Est. Rehab:** -${estimated_rehab:,.0f}")
-col_d.write(f"**Est. Moving:** -${estimated_move_cost:,.0f}")
+  condition_rating = st.slider(
+      "As-Is Condition Rating (1=Total Wreck, 5=Average, 10=Pristine)",
+      min_value=1,
+      max_value=10,
+      value=10,
+  )
 
-st.markdown("---")
+  risk_discount_pct = (
+      st.slider(
+          "Risk Discount Modifier Strategy (%)",
+          min_value=50,
+          max_value=100,
+          value=80,
+          help="Discount percentage applied to ceiling value.",
+      )
+      / 100.0
+  )
 
-# --- TOP 5 COMPS TABLE ---
-st.subheader("📊 Top 5 Comparable Past Sales")
-st.markdown(
-    "These are the closest matching deals from your 2022–2026 transaction"
-    " history:"
-)
+  target_profit_ratio = st.slider(
+      "Target Profit per Dollar Invested ($)",
+      min_value=0.10,
+      max_value=1.00,
+      value=0.50,
+      step=0.05,
+      help="Required profit ratio relative to investment capital.",
+  )
 
-display_cols = [
-    "Address",
-    "Sales Price Clean",
-    "Size (Single/Double)",
-    "Year Built Clean",
-    "Must Move (Yes/No)",
-    "Rating",
-    "Sale Date",
-]
-comps_display = matched_comps[display_cols].rename(
-    columns={
-        "Sales Price Clean": "Sold Price ($)",
-        "Year Built Clean": "Year Built",
-        "Size (Single/Double)": "Size",
-        "Must Move (Yes/No)": "Must Move",
-    }
-)
+# ==================== UNDERWRITING ENGINE MATH ====================
+base_benchmark = 50000.0 if footprint_size == "Doublewide" else 30000.0
+base_year = 2000
+age_adjustment = (year_built - base_year) * 500.0
+condition_adjustment = (condition_rating - 5) * 3500.0
 
-comps_display["Sold Price ($)"] = comps_display["Sold Price ($)"].map(
-    "${:,.0f}".format
-)
-comps_display["Year Built"] = comps_display["Year Built"].astype(int)
+gross_resale_value = base_benchmark + age_adjustment + condition_adjustment
 
-st.dataframe(comps_display, use_container_width=True)
+relocation_penalty = 0.0
+if "Yes" in must_move_radio:
+  relocation_penalty = 10000.0 if footprint_size == "Doublewide" else 5000.0
 
-# --- MARKET VISUALIZER CHART ---
-st.markdown("---")
-st.subheader("📈 Resale Value vs. Year Built (Historical Context)")
+liquidation_ceiling = gross_resale_value - relocation_penalty
+target_exit_value = liquidation_ceiling * risk_discount_pct
 
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.scatter(
-    df_dataset["Year Built Clean"],
-    df_dataset["Sales Price Clean"],
-    color="gray",
-    alpha=0.5,
-    label="All Past Sales",
-)
-ax.scatter(
-    matched_comps["Year Built Clean"],
-    matched_comps["Sales Price Clean"],
-    color="blue",
-    s=100,
-    label="Top 5 Comps Used",
-)
-ax.scatter(
-    [year_input],
-    [est_resale_price],
-    color="green",
-    marker="*",
-    s=250,
-    label="Subject Valuation Estimate",
-)
+max_allowable_offer = target_exit_value / (1.0 + target_profit_ratio)
+targeted_profit = max_allowable_offer * target_profit_ratio
 
-ax.set_xlabel("Year Built")
-ax.set_ylabel("Sales Price ($)")
-ax.set_title("Property Resale Estimate Relative to Market Database")
-ax.legend()
-ax.grid(True, linestyle="--", alpha=0.5)
+# ==================== RIGHT COLUMN: LIQUIDATION MATH PROOF ====================
+with col_right:
+  st.subheader("📈 As-Is Liquidation Math Proof")
 
-st.pyplot(fig)
+  m1, m2 = st.columns(2)
+  m1.metric("MAX ALLOWABLE OFFER", f"${max_allowable_offer:,.2f}")
+  m2.metric("Targeted Wholesale Profit", f"${targeted_profit:,.2f}")
+
+  st.markdown("---")
+
+  st.subheader("📊 Underwriting Breakdown")
+
+  st.markdown(
+      f"* **Footprint Starting Point:** Unit recognized as a `{footprint_size}`"
+      f" . Initial median benchmark value set to `${base_benchmark:,.2f}`."
+  )
+  st.markdown(
+      f"* **Age Index Adjustment:** Built in **{year_built}**. Scaled value by"
+      f" **+${age_adjustment:,.2f}** against market year baseline."
+  )
+  st.markdown(
+      f"* **Condition Index Scaling:** Condition score"
+      f" **{condition_rating}/10** adjusted raw asset value by"
+      f" **+${condition_adjustment:,.2f}** directly at the baseline."
+  )
+
+  if relocation_penalty > 0:
+    st.markdown(
+        f"* **Logistics Factor:** ⚠️ **-${relocation_penalty:,.2f}** relocation"
+        f" penalty applied for a {footprint_size} required to move."
+    )
+  else:
+    st.markdown(
+        "* **Logistics Factor:** No relocation penalty applied (sits in park"
+        " / stays on lot)."
+    )
+
+  st.markdown(
+      f"* **Calculated Gross Resale Value:** `${gross_resale_value:,.2f}`"
+  )
+
+  # Styled Blue Info Container Box
+  st.markdown(
+      f"""
+    <div style="background-color: #1a2d42; padding: 20px; border-radius: 8px; border: 1px solid #2d4f7c; margin-top: 15px; margin-bottom: 20px;">
+        <h4 style="color: #64b5f6; margin-top: 0;">Liquidation Accounting Checklist:</h4>
+        <ul style="color: #e0e0e0; list-style-type: disc; padding-left: 20px; line-height: 1.8;">
+            <li><b>Adjusted Liquidation Value Ceiling:</b> ${liquidation_ceiling:,.2f}</li>
+            <li><b>Risk Discount Strategy Level ({int(risk_discount_pct*100)}%):</b> ${target_exit_value:,.2f}</li>
+            <hr style="border-color: #2d4f7c; margin: 10px 0;">
+            <li><b>Target Profit Ratio:</b> {target_profit_ratio:.2f} profit for every 1.00 invested</li>
+            <li><b>Maximum Acquisition Cost (Your Investment):</b> ${max_allowable_offer:,.2f}</li>
+            <li><b>Resulting Minimum Assignment Spread:</b> ${targeted_profit:,.2f}</li>
+            <hr style="border-color: #2d4f7c; margin: 10px 0;">
+            <li><b>Mathematical Proof:</b> {max_allowable_offer:,.2f} (Purchase) + {targeted_profit:,.2f} (Profit) = ${target_exit_value:,.2f} (Target Exit Value)</li>
+        </ul>
+    </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  if st.button("Log Deal Data & Lock Offer", use_container_width=False):
+    st.success(
+        f"Offer of ${max_allowable_offer:,.2f} locked for {property_address}!"
+    )
+
+# ==================== HISTORICAL COMPS LOOKUP SECTION ====================
+if df_dataset is not None and len(df_dataset) > 0:
+  st.markdown("---")
+  with st.expander("🔍 View Historical Sales Database (Top Matching Comps)"):
+    features = [
+        "Size_Double",
+        "Year Built Clean",
+        "MustMove_Yes",
+        "Rating Clean",
+    ]
+    X = df_dataset[features]
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    knn = NearestNeighbors(n_neighbors=5, metric="euclidean")
+    knn.fit(X_scaled)
+
+    is_double = 1 if footprint_size == "Doublewide" else 0
+    is_move = 1 if "Yes" in must_move_radio else 0
+
+    subj_df = pd.DataFrame([{
+        "Size_Double": is_double,
+        "Year Built Clean": float(year_built),
+        "MustMove_Yes": is_move,
+        "Rating Clean": float(condition_rating),
+    }])[features]
+
+    subj_scaled = scaler.transform(subj_df)
+    distances, indices = knn.kneighbors(subj_scaled)
+    matched_comps = df_dataset.iloc[indices[0]].copy()
+
+    display_cols = [
+        "Address",
+        "Sales Price Clean",
+        "Size (Single/Double)",
+        "Year Built Clean",
+        "Must Move (Yes/No)",
+        "Rating",
+        "Sale Date",
+    ]
+    comps_display = matched_comps[display_cols].rename(
+        columns={
+            "Sales Price Clean": "Sold Price ($)",
+            "Year Built Clean": "Year Built",
+            "Size (Single/Double)": "Size",
+            "Must Move (Yes/No)": "Must Move",
+        }
+    )
+    comps_display["Sold Price ($)"] = comps_display["Sold Price ($)"].map(
+        "${:,.0f}".format
+    )
+    st.dataframe(comps_display, use_container_width=True)
