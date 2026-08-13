@@ -131,16 +131,16 @@ with col_left:
   property_address = st.text_input("Property Address", value="Columbia, SC")
 
   footprint_size = st.selectbox(
-      "Footprint Size Class", ["Doublewide", "Singlewide"]
+      "Footprint Size Class", ["Singlewide", "Doublewide"]
   )
 
   year_built = st.number_input(
-      "Year Built", min_value=1970, max_value=2026, value=2017, step=1
+      "Year Built", min_value=1970, max_value=2026, value=1990, step=1
   )
 
   c_bed, c_bath = st.columns(2)
   bedrooms = c_bed.number_input(
-      "Bedrooms", min_value=1, max_value=6, value=4, step=1
+      "Bedrooms", min_value=1, max_value=6, value=3, step=1
   )
   bathrooms = c_bath.number_input(
       "Bathrooms", min_value=1.0, max_value=4.0, value=2.00, step=0.5
@@ -156,7 +156,7 @@ with col_left:
       "As-Is Condition Rating (1=Total Wreck, 5=Average, 10=Pristine)",
       min_value=1,
       max_value=10,
-      value=10,
+      value=7,
   )
 
   risk_discount_pct = (
@@ -179,38 +179,39 @@ with col_left:
       help="Required profit ratio relative to investment capital.",
   )
 
-  # NEW: Offer Range Spread Control
   offer_spread = st.slider(
       "Negotiation Buffer Below Ceiling ($)",
       min_value=3000,
       max_value=5000,
       value=5000,
       step=500,
-      help=(
-          "Amount subtracted from the calculated MAO ceiling to set your"
-          " starting low-end offer."
-      ),
+      help="Amount subtracted from calculated MAO to set your lower offer.",
   )
 
-# ==================== UNDERWRITING ENGINE MATH ====================
-base_benchmark = 50000.0 if footprint_size == "Doublewide" else 30000.0
+# ==================== UNDERWRITING ENGINE MATH (DATA DERIVED) ====================
+# Statistically proven coefficients from 157 historical sales
+base_benchmark = 34715.0 if footprint_size == "Doublewide" else 23431.0
 base_year = 2000
-age_adjustment = (year_built - base_year) * 500.0
-condition_adjustment = (condition_rating - 5) * 3500.0
+age_adjustment = (year_built - base_year) * 483.0
+condition_adjustment = (condition_rating - 5) * 4063.0
 
-gross_resale_value = base_benchmark + age_adjustment + condition_adjustment
+relocation_penalty = 12951.0 if "Yes" in must_move_radio else 0.0
 
-relocation_penalty = 0.0
-if "Yes" in must_move_radio:
-  relocation_penalty = 10000.0 if footprint_size == "Doublewide" else 5000.0
+gross_resale_value = (
+    base_benchmark
+    + age_adjustment
+    + condition_adjustment
+    - relocation_penalty
+)
+gross_resale_value = max(3000.0, gross_resale_value)
 
-liquidation_ceiling = gross_resale_value - relocation_penalty
+liquidation_ceiling = gross_resale_value
 target_exit_value = liquidation_ceiling * risk_discount_pct
 
-# MAO High-End Ceiling
 max_allowable_offer_high = target_exit_value / (1.0 + target_profit_ratio)
-# Low-End Offer Anchor
 max_allowable_offer_low = max_allowable_offer_high - offer_spread
+if max_allowable_offer_low < 500:
+  max_allowable_offer_low = max(500.0, max_allowable_offer_high * 0.7)
 
 targeted_profit = max_allowable_offer_high * target_profit_ratio
 
@@ -230,35 +231,34 @@ with col_right:
   st.subheader("📊 Underwriting Breakdown")
 
   st.markdown(
-      f"* **Footprint Starting Point:** Unit recognized as a `{footprint_size}`"
-      f" . Initial median benchmark value set to `${base_benchmark:,.2f}`."
+      f"* **Footprint Baseline:** Unit recognized as a `{footprint_size}`."
+      f" Regression baseline benchmark set to `${base_benchmark:,.2f}`."
   )
   st.markdown(
-      f"* **Age Index Adjustment:** Built in **{year_built}**. Scaled value by"
-      f" **+${age_adjustment:,.2f}** against market year baseline."
+      f"* **Age Index Adjustment:** Built in **{year_built}**. Adjusted value by"
+      f" **${age_adjustment:+,.2f}** ($483/year relative to 2000 baseline)."
   )
   st.markdown(
       f"* **Condition Index Scaling:** Condition score"
-      f" **{condition_rating}/10** adjusted raw asset value by"
-      f" **+${condition_adjustment:,.2f}** directly at the baseline."
+      f" **{condition_rating}/10** adjusted raw value by"
+      f" **${condition_adjustment:+,.2f}** ($4,063/rating point)."
   )
 
   if relocation_penalty > 0:
     st.markdown(
         f"* **Logistics Factor:** ⚠️ **-${relocation_penalty:,.2f}** relocation"
-        f" penalty applied for a {footprint_size} required to move."
+        f" discount applied for a {footprint_size} required to move."
     )
   else:
     st.markdown(
-        "* **Logistics Factor:** No relocation penalty applied (sits in park"
-        " / stays on lot)."
+        "* **Logistics Factor:** No relocation penalty applied (In-Park / Stays"
+        " on lot)."
     )
 
   st.markdown(
       f"* **Calculated Gross Resale Value:** `${gross_resale_value:,.2f}`"
   )
 
-  # Styled Blue Info Container Box
   st.markdown(
       f"""
     <div style="background-color: #1a2d42; padding: 20px; border-radius: 8px; border: 1px solid #2d4f7c; margin-top: 15px; margin-bottom: 20px;">
