@@ -30,11 +30,9 @@ def save_offer_to_file(data):
   df = load_saved_offers()
   new_row = pd.DataFrame([data])
   if not df.empty and "Address" in df.columns:
-    # Remove existing record for the same address to update it
-    mask = (
-        df["Address"].astype(str).str.strip().str.lower()
-        == data["Address"].strip().lower()
-    )
+    # Remove existing record with same Address & Seller to update it
+    mask = (df["Address"].astype(str).str.strip().str.lower() == data["Address"].strip().lower()) & \
+           (df["Seller Name"].astype(str).str.strip().str.lower() == data["Seller Name"].strip().lower())
     df = df[~mask]
   df = pd.concat([df, new_row], ignore_index=True)
   df.to_csv(SAVED_OFFERS_FILE, index=False)
@@ -153,16 +151,24 @@ df_dataset = load_and_clean_data()
 saved_df = load_saved_offers()
 
 st.sidebar.header("📂 Load Saved Property")
-saved_addresses = ["-- Select New Property --"]
-if not saved_df.empty and "Address" in saved_df.columns:
-  saved_addresses += list(saved_df["Address"].dropna().unique())
+saved_options = ["-- Select New Property --"]
+saved_map = {}
 
-selected_saved_prop = st.sidebar.selectbox(
-    "Pull Up Previous Offer:", saved_addresses
+if not saved_df.empty and "Address" in saved_df.columns:
+  for idx, row in saved_df.iterrows():
+    addr = str(row.get("Address", "Unknown Address"))
+    seller = str(row.get("Seller Name", "N/A"))
+    label = f"{addr} — {seller}" if seller != "N/A" and seller != "" else addr
+    saved_options.append(label)
+    saved_map[label] = row
+
+selected_label = st.sidebar.selectbox(
+    "Pull Up Previous Offer:", saved_options
 )
 
 # Defaults
 def_address = "Columbia, SC"
+def_seller = "John Smith"
 def_size = "Singlewide"
 def_year = 1990
 def_beds = 3
@@ -173,23 +179,18 @@ def_risk = 80
 def_profit = 0.50
 
 # Pre-fill if saved property selected
-if (
-    selected_saved_prop != "-- Select New Property --"
-    and not saved_df.empty
-    and "Address" in saved_df.columns
-):
-  match_row = saved_df[saved_df["Address"] == selected_saved_prop]
-  if not match_row.empty:
-    row_data = match_row.iloc[-1]
-    def_address = str(row_data.get("Address", def_address))
-    def_size = str(row_data.get("Footprint Size", def_size))
-    def_year = int(row_data.get("Year Built", def_year))
-    def_beds = int(row_data.get("Bedrooms", def_beds))
-    def_baths = float(row_data.get("Bathrooms", def_baths))
-    def_move = str(row_data.get("Must Move", def_move))
-    def_cond = int(row_data.get("Condition Rating", def_cond))
-    def_risk = int(row_data.get("Risk Discount (%)", def_risk))
-    def_profit = float(row_data.get("Target Profit Ratio", def_profit))
+if selected_label != "-- Select New Property --" and selected_label in saved_map:
+  row_data = saved_map[selected_label]
+  def_address = str(row_data.get("Address", def_address))
+  def_seller = str(row_data.get("Seller Name", def_seller))
+  def_size = str(row_data.get("Footprint Size", def_size))
+  def_year = int(row_data.get("Year Built", def_year))
+  def_beds = int(row_data.get("Bedrooms", def_beds))
+  def_baths = float(row_data.get("Bathrooms", def_baths))
+  def_move = str(row_data.get("Must Move", def_move))
+  def_cond = int(row_data.get("Condition Rating", def_cond))
+  def_risk = int(row_data.get("Risk Discount (%)", def_risk))
+  def_profit = float(row_data.get("Target Profit Ratio", def_profit))
 
 st.sidebar.markdown("---")
 
@@ -201,6 +202,7 @@ with col_left:
   st.subheader("📝 Control Parameters")
 
   property_address = st.text_input("Property Address", value=def_address)
+  seller_name = st.text_input("Seller's Name", value=def_seller)
 
   size_opts = ["Singlewide", "Doublewide"]
   size_idx = size_opts.index(def_size) if def_size in size_opts else 0
@@ -340,6 +342,7 @@ with col_right:
     record = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "Address": property_address,
+        "Seller Name": seller_name,
         "Footprint Size": footprint_size,
         "Year Built": year_built,
         "Bedrooms": bedrooms,
@@ -355,8 +358,8 @@ with col_right:
     }
     save_offer_to_file(record)
     st.success(
-        f"✅ Offer of ${max_allowable_offer:,.2f} for '{property_address}' saved"
-        " successfully!"
+        f"✅ Offer of ${max_allowable_offer:,.2f} for '{property_address}'"
+        f" (Seller: {seller_name}) saved successfully!"
     )
     st.rerun()
 
@@ -369,7 +372,6 @@ if not saved_df_current.empty:
         "Here are all previously underwritten properties and locked offers:"
     )
 
-    # Format currency columns
     display_df = saved_df_current.copy()
     for col in [
         "Gross Resale Value",
